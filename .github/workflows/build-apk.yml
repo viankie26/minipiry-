@@ -1,0 +1,73 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Minipiry APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Restore Firebase-registered debug keystore & default .env
+        run: |
+          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ ! -f .env ] && [ -f .env.example ]; then
+            cp .env.example .env
+          fi
+
+      - name: Assemble Android APK
+        run: gradle :app:assembleDebug --no-daemon
+
+      - name: Prepare minipiry.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk minipiry.apk
+
+      - name: Upload APK to GitHub Actions Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: minipiry-apk
+          path: minipiry.apk
+          if-no-files-found: error
+
+      - name: Publish direct APK download to GitHub Releases
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest minipiry.apk --clobber
+          else
+            gh release create latest minipiry.apk \
+              --target "${{ github.sha }}" \
+              --title "超简到期 Minipiry Android APK" \
+              --notes "直接点击下方 minipiry.apk 下载到 Android 手机安装即可（已内置与 Firebase 匹配的签名证书，支持 Google 一键登录与云端同步）。"
+          fi
