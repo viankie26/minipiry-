@@ -1,0 +1,142 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCategory(cat) {
+      return cat is string &&
+             cat.size() >= 4 &&
+             cat.size() <= 16 &&
+             (cat == 'food' || cat == 'medicine' || cat == 'daily' || cat == 'other');
+    }
+
+    function isValidExpiryDate(dateStr) {
+      return dateStr is string &&
+             dateStr.size() == 10 &&
+             dateStr.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidItem(data) {
+      return data.ownerId is string &&
+             data.ownerId.size() >= 1 &&
+             data.ownerId.size() <= 128 &&
+             data.ownerId == request.auth.uid &&
+             data.name is string &&
+             data.name.size() >= 1 &&
+             data.name.size() <= 120 &&
+             isValidCategory(data.category) &&
+             isValidExpiryDate(data.expiry_date) &&
+             (!('note' in data) || (data.note is string && data.note.size() >= 1 && data.note.size() <= 500)) &&
+             data.used_up is bool &&
+             data.created_at is timestamp &&
+             data.created_at <= request.time &&
+             data.updated_at is timestamp &&
+             data.updated_at <= request.time;
+    }
+
+    function isValidUserSettings(data) {
+      return data.ownerId is string &&
+             data.ownerId.size() >= 1 &&
+             data.ownerId.size() <= 128 &&
+             data.ownerId == request.auth.uid &&
+             data.remindersEnabled is bool &&
+             data.reminderHour is int &&
+             data.reminderHour >= 0 &&
+             data.reminderHour <= 23 &&
+             data.reminderMinute is int &&
+             data.reminderMinute >= 0 &&
+             data.reminderMinute <= 59 &&
+             data.daysBefore is int &&
+             data.daysBefore >= 0 &&
+             data.daysBefore <= 30 &&
+             data.language is string &&
+             data.language.size() == 2 &&
+             (data.language == 'zh' || data.language == 'en') &&
+             data.createdAt is timestamp &&
+             data.createdAt <= request.time &&
+             data.updatedAt is timestamp &&
+             data.updatedAt <= request.time;
+    }
+
+    match /items/{itemId} {
+      allow get: if isSignedIn() &&
+                    isValidId(itemId) &&
+                    existing().ownerId == request.auth.uid;
+
+      allow list: if isSignedIn() &&
+                     existing().ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(itemId) &&
+                       incoming().keys().hasAll(['ownerId', 'name', 'category', 'expiry_date', 'used_up', 'created_at', 'updated_at']) &&
+                       incoming().keys().hasOnly(['ownerId', 'name', 'category', 'expiry_date', 'note', 'used_up', 'created_at', 'updated_at']) &&
+                       isValidItem(incoming());
+
+      allow update: if isValidItem(incoming()) &&
+                       isSignedIn() &&
+                       isValidId(itemId) &&
+                       existing().ownerId == request.auth.uid &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().created_at == existing().created_at &&
+                       incoming().keys().hasOnly(['ownerId', 'name', 'category', 'expiry_date', 'note', 'used_up', 'created_at', 'updated_at']) && (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['used_up', 'updated_at']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'expiry_date', 'note', 'used_up', 'updated_at'])
+                       );
+
+      allow delete: if isSignedIn() &&
+                       isValidId(itemId) &&
+                       existing().ownerId == request.auth.uid;
+    }
+
+    match /user_settings/{userId} {
+      allow get: if isSignedIn() &&
+                    isValidId(userId) &&
+                    request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll(['ownerId', 'remindersEnabled', 'reminderHour', 'reminderMinute', 'daysBefore', 'language', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerId', 'remindersEnabled', 'reminderHour', 'reminderMinute', 'daysBefore', 'language', 'createdAt', 'updatedAt']) &&
+                       isValidUserSettings(incoming());
+
+      allow update: if isValidUserSettings(incoming()) &&
+                       isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       existing().ownerId == request.auth.uid &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().keys().hasOnly(['ownerId', 'remindersEnabled', 'reminderHour', 'reminderMinute', 'daysBefore', 'language', 'createdAt', 'updatedAt']) && (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['remindersEnabled', 'reminderHour', 'reminderMinute', 'daysBefore', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['language', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['remindersEnabled', 'reminderHour', 'reminderMinute', 'daysBefore', 'language', 'updatedAt'])
+                       );
+
+      allow delete: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId;
+    }
+  }
+}

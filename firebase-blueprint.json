@@ -1,0 +1,122 @@
+{
+  "entities": {
+    "ExpiryItem": {
+      "title": "ExpiryItem",
+      "description": "A household food, medicine, daily care, or other item tracked for expiration.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the item owner."
+        },
+        "name": {
+          "type": "string",
+          "description": "Trimmed display name of the item (1..120 chars)."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["food", "medicine", "daily", "other"],
+          "description": "Item category matching original baozhiqi schema."
+        },
+        "expiry_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Local expiration date formatted as YYYY-MM-DD."
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional non-empty note; omitted when blank."
+        },
+        "used_up": {
+          "type": "boolean",
+          "description": "Whether the item has been used up and archived."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp; clients must submit FieldValue.serverTimestamp()."
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modification server timestamp; clients must submit FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "category",
+        "expiry_date",
+        "used_up",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "UserReminderSettings": {
+      "title": "UserReminderSettings",
+      "description": "Per-user local reminder schedule and language preferences.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user."
+        },
+        "remindersEnabled": {
+          "type": "boolean",
+          "description": "Whether local expiry notifications are enabled."
+        },
+        "reminderHour": {
+          "type": "integer",
+          "description": "Hour of day in 24h format (0..23)."
+        },
+        "reminderMinute": {
+          "type": "integer",
+          "description": "Minute of hour (0..59)."
+        },
+        "daysBefore": {
+          "type": "integer",
+          "description": "Advance warning threshold in days (0..30)."
+        },
+        "language": {
+          "type": "string",
+          "enum": ["zh", "en"],
+          "description": "Preferred UI language ('zh' or 'en')."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp; clients must submit FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modification server timestamp; clients must submit FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "ownerId",
+        "remindersEnabled",
+        "reminderHour",
+        "reminderMinute",
+        "daysBefore",
+        "language",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/items/{itemId}": {
+      "schema": {
+        "$ref": "#/entities/ExpiryItem"
+      },
+      "description": "Top-level collection of expiry items isolated by ownerId == request.auth.uid."
+    },
+    "/user_settings/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserReminderSettings"
+      },
+      "description": "Per-user reminder and language settings keyed by Firebase Auth UID."
+    }
+  }
+}

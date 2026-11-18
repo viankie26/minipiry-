@@ -1,0 +1,6 @@
+{
+  "name": "超简到期",
+  "description": "超简到期（MINIPIRY）—— 食品、药品与日化用品保质期管理与到期提醒原生安卓应用。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
