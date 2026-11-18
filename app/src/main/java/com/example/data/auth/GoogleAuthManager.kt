@@ -9,7 +9,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.example.data.local.LanguagePreferencesRepository
 import com.example.data.reminder.ExpiryReminderScheduler
 import com.example.data.remote.FirestoreItemsRepository
@@ -50,6 +49,12 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 object GoogleAuthManager {
   private const val TAG = "Auth"
 
+  private fun resolveServerClientId(context: Context): String? {
+    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+    if (resId == 0) return null
+    return runCatching { context.getString(resId) }.getOrNull()?.takeIf { it.isNotBlank() }
+  }
+
   /**
    * Silent startup auto sign-in using a single `GetGoogleIdOption` per request.
    */
@@ -64,13 +69,8 @@ object GoogleAuthManager {
       onAuthSuccess()
       return
     }
-    val clientId = try {
-      context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
-      onUnauthenticated()
-      return
-    }
-    if (clientId.isBlank()) {
+    val clientId = resolveServerClientId(context)
+    if (clientId == null) {
       onUnauthenticated()
       return
     }
@@ -111,9 +111,8 @@ object GoogleAuthManager {
     onAuthCancelled: () -> Unit,
     onAuthError: (String) -> Unit,
   ) {
-    val clientId = try {
-      context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    val clientId = resolveServerClientId(context)
+    if (clientId == null) {
       onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
       return
     }
@@ -195,7 +194,8 @@ object GoogleAuthManager {
       try {
         user.delete().await()
       } catch (_: FirebaseAuthRecentLoginRequiredException) {
-        val clientId = context.getString(R.string.default_web_client_id)
+        val clientId = resolveServerClientId(context)
+          ?: throw IllegalStateException("Google Sign-In configuration missing")
         val activityContext = context.findActivity() ?: context
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
         val req = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()

@@ -24,16 +24,34 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Configure pre-installed Android SDK & accept licenses
+      - name: Provision Android SDK 36.1 & Build-Tools 36.0.0
         run: |
           ANDROID_SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "ANDROID_HOME=$ANDROID_SDK_DIR" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_DIR" >> "$GITHUB_ENV"
+          sudo mkdir -p "$ANDROID_SDK_DIR/licenses"
           sudo chmod -R a+rwx "$ANDROID_SDK_DIR"
-          SDKMANAGER=$(find "$ANDROID_SDK_DIR/cmdline-tools" -name sdkmanager -type f | head -n 1)
-          if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_DIR" --licenses > /dev/null || true
+
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_SDK_DIR/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_SDK_DIR/licenses/android-sdk-preview-license"
+
+          # Upgrade cmdline-tools cleanly to latest (20.0+) so sdkmanager supports minorApiLevel = 1 (platforms;android-36.1)
+          if [ -d "$ANDROID_SDK_DIR/cmdline-tools/latest" ] && [ ! -d "$ANDROID_SDK_DIR/cmdline-tools/bootstrap" ]; then
+            mv "$ANDROID_SDK_DIR/cmdline-tools/latest" "$ANDROID_SDK_DIR/cmdline-tools/bootstrap"
           fi
+          BOOT_SDKMANAGER=$(find "$ANDROID_SDK_DIR/cmdline-tools" -name sdkmanager -type f | head -n 1)
+          if [ -z "$BOOT_SDKMANAGER" ]; then
+            curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip -o "$RUNNER_TEMP/cmdline-tools.zip"
+            mkdir -p "$ANDROID_SDK_DIR/cmdline-tools"
+            unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmd-extract"
+            mv "$RUNNER_TEMP/cmd-extract/cmdline-tools" "$ANDROID_SDK_DIR/cmdline-tools/bootstrap"
+            BOOT_SDKMANAGER="$ANDROID_SDK_DIR/cmdline-tools/bootstrap/bin/sdkmanager"
+          fi
+
+          yes | "$BOOT_SDKMANAGER" --sdk_root="$ANDROID_SDK_DIR" --install "cmdline-tools;latest" > /dev/null
+          LATEST_SDKMANAGER="$ANDROID_SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$LATEST_SDKMANAGER" --sdk_root="$ANDROID_SDK_DIR" --licenses > /dev/null || true
+          yes | "$LATEST_SDKMANAGER" --sdk_root="$ANDROID_SDK_DIR" --install "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
 
       - name: Install Gradle 9.3.1
         run: |
@@ -41,17 +59,44 @@ jobs:
           unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-9.3.1/bin" >> "$GITHUB_PATH"
 
-      - name: Restore Firebase-registered debug keystore & default .env
+      - name: Prepare Keystore, Firebase DB Config & .env
         run: |
-          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+          if [ ! -f debug.keystore ]; then
+            if [ -f debug.keystore.base64 ]; then
+              base64 -d debug.keystore.base64 > debug.keystore
+            else
+              keytool -genkeypair -v \
+                -keystore debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
           fi
-          if [ ! -f .env ] && [ -f .env.example ]; then
-            cp .env.example .env
+          if [ ! -f app/src/main/res/values/firebase_applet_config.xml ]; then
+            printf '<?xml version="1.0" encoding="utf-8" standalone="no"?>\n<resources>\n    <string name="firestore_database_id" translatable="false">ai-studio-android-eae03568-790c-4abf-a8f7-7af26dae41b8</string>\n</resources>\n' > app/src/main/res/values/firebase_applet_config.xml
+          fi
+          if [ ! -f .env ]; then
+            if [ -f .env.example ]; then
+              cp .env.example .env
+            else
+              touch .env
+            fi
           fi
 
       - name: Assemble Android APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          if ! gradle :app:assembleDebug --no-daemon 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"; then
+            echo "### Gradle Build Failure Summary" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E "FAILURE:|What went wrong:|^\* |^> |e: file://" "$RUNNER_TEMP/gradle-build.log" | tail -n 60 >> "$GITHUB_STEP_SUMMARY" || tail -n 60 "$RUNNER_TEMP/gradle-build.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Prepare minipiry.apk
         run: cp app/build/outputs/apk/debug/app-debug.apk minipiry.apk
@@ -68,11 +113,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          CERT_INFO=$(keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey | grep -E "SHA1:|SHA256:" | sed 's/^[[:space:]]*//')
+          NOTES=$(printf "直接点击下方 **minipiry.apk** 下载到 Android 手机安装即可。\n\n当前安装包签名证书指纹（若更换过密钥，请确保已添加到 Firebase 项目设置中）：\n\`\`\`\n%s\n\`\`\`" "$CERT_INFO")
           if gh release view latest >/dev/null 2>&1; then
             gh release upload latest minipiry.apk --clobber
+            gh release edit latest --notes "$NOTES"
           else
             gh release create latest minipiry.apk \
               --target "${{ github.sha }}" \
               --title "超简到期 Minipiry Android APK" \
-              --notes "直接点击下方 minipiry.apk 下载到 Android 手机安装即可（已内置与 Firebase 匹配的签名证书，支持 Google 一键登录与云端同步）。"
+              --notes "$NOTES"
           fi
